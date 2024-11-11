@@ -35,25 +35,7 @@ fn build_prompt_request(prompt:String) -> String{
     )
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let api_key:String;
-    //run_shell_command("iwconfig | grep \"A\"".to_string());
-
-    match env::var("GROQ_API_KEY"){
-        Ok(v) => {api_key = v},
-        Err(_) => {
-            println!("GROQ_API_KEY not set");
-            exit(-1);
-        }
-    }
-    let prompt = env::args().skip(1).collect::<Vec<String>>().join(" ");
-    if prompt == "" {
-        println!("No prompt supplied");
-        exit(-1);
-    }
-
-
+async fn fetch_groq_completion(api_key:String, prompt:String) -> Result<Value, Box<dyn std::error::Error>> {
     let client = Client::new();
     let response = client.post("https://api.groq.com/openai/v1/chat/completions")
         .header("Content-Type", "application/json")
@@ -62,23 +44,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .send()
         .await?;
 
-
     let body = response.text().await?;
-    let json: Value = serde_json::from_str(&body)?;
-    let command = json["choices"][0]["message"]["content"].as_str().expect(&format!("Invalid response ({})", json));
+    Ok(serde_json::from_str(&body).expect("Invalid Json"))
+}
 
-    print!("Run '{}'?", command);
-    stdout().flush().unwrap();
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let api_key:String;
 
-    let mut buffer:String = String::new();
-    stdin().read_line(&mut buffer).expect("Could not read terminal input");
-
-    if buffer.trim_end() == ""{
-        println!("Executing... \n------------");
-        run_shell_command(command.to_string());
-    }else{
-        println!("Cancelled!");
+    match env::var("GROQ_API_KEY"){
+        Ok(v) => {api_key = v},
+        Err(_) => {
+            println!("GROQ_API_KEY not set");
+            exit(-1);
+        }
     }
 
+    let prompt_start_index = match env::args().nth(1) {Some(v) => {
+        if v == "-r" || v == "--raw" {2} else {1}
+    }, None => 1};
+
+    let raw_output = prompt_start_index==2;
+
+    let prompt = env::args().skip(prompt_start_index).collect::<Vec<String>>().join(" ");
+    if prompt == "" {
+        println!("No prompt supplied");
+        exit(-1);
+    }
+
+    let json: Value = fetch_groq_completion(api_key, prompt).await?;
+    let command = json["choices"][0]["message"]["content"].as_str().expect(&format!("Invalid response ({})", json));
+
+    if raw_output {
+        println!("{}", &command);
+    }else{
+        print!("Run '{}'?", command);
+        stdout().flush().unwrap();
+
+        let mut buffer:String = String::new();
+        stdin().read_line(&mut buffer).expect("Could not read terminal input");
+
+        if buffer.trim_end() == ""{
+            println!("Executing... \n------------");
+            run_shell_command(command.to_string());
+        }else{
+            println!("Cancelled!");
+        }
+    }
     Ok(())
 }
