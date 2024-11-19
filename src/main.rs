@@ -48,6 +48,24 @@ async fn fetch_groq_completion(api_key:String, prompt:String) -> Result<Value, B
     Ok(serde_json::from_str(&body).expect("Invalid Json"))
 }
 
+#[derive(PartialEq, Eq, Clone, Copy)]
+enum PARAMETER{
+    RAW,
+    HELP
+}
+
+impl PARAMETER {
+    fn from_str(input:&str) -> Option<PARAMETER>{
+        match input {
+            "-r" => Some(PARAMETER::RAW),
+            "--raw" => Some(PARAMETER::RAW),
+            "-h" => Some(PARAMETER::HELP),
+            "--help" => Some(PARAMETER::HELP),
+            _ => None
+        }   
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let api_key:String;
@@ -60,14 +78,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    let mut parameter:Option<PARAMETER> = None;
     let prompt_start_index = match env::args().nth(1) {Some(v) => {
-        if v == "-r" || v == "--raw" {2} else {1}
+        if v.starts_with("-") {
+            parameter = PARAMETER::from_str(&v);
+            2
+        } else {1}
     }, None => 1};
 
-    let raw_output = prompt_start_index==2;
-
-    let prompt = env::args().skip(prompt_start_index).collect::<Vec<String>>().join(" ");
-    if prompt == "" {
+    let prompt: String = env::args().skip(prompt_start_index).collect::<Vec<String>>().join(" ");
+    if prompt == "" && match parameter {Some(p)=>{p != PARAMETER::HELP}, None=>true}{
         println!("No prompt supplied");
         exit(-1);
     }
@@ -75,10 +95,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let json: Value = fetch_groq_completion(api_key, prompt).await?;
     let command = json["choices"][0]["message"]["content"].as_str().expect(&format!("Invalid response ({})", json));
 
-    if raw_output {
-        println!("{}", &command);
-    }else{
-        print!("Run '{}'?", command);
+    if parameter.is_none(){
+        print!("Run '{}' (y?)", command);
         stdout().flush().unwrap();
 
         let mut buffer:String = String::new();
@@ -90,6 +108,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }else{
             println!("Cancelled!");
         }
+    }else{
+        let parameter:PARAMETER = parameter.unwrap();
+
+        if parameter == PARAMETER::RAW {
+            println!("{}", command);
+        }else if parameter == PARAMETER::HELP{
+            println!(r#"
+            Usage: 
+            --help (-h) Displays help Page.
+            --raw (-r) Outputs the raw command and does not execute it. 
+            "#)
+        }
+
     }
     Ok(())
 }
